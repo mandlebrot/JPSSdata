@@ -16,6 +16,20 @@ import h5py
 from netCDF4 import Dataset
 
 def search_api(sname,area,time,num=0,platform="",version=""):
+    """ search_api: API search of the different satellite granules
+        Inputs:
+            sname       short name 
+            area        polygon with the search area
+            time        time interval (init_time,final_time)
+            num         number of granules to process (if 0: all the granules)
+            platform    string with the platform
+            version     string with the version
+        Outputs: 
+            granules    a dictionary with the metadata of the search
+
+        Developed in Python 2.7.15 :: Anaconda 4.5.10, on MACINTOSH. 
+        Angel Farguell (angel.farguell@gmail.com), 2018-09-17
+    """
     api = GranuleQuery()
     if not version:    
         if not platform:
@@ -59,6 +73,17 @@ def search_api(sname,area,time,num=0,platform="",version=""):
     return granules
 
 def get_meta(area,time,num=0):
+    """ get_meta: Get all the meta data from the API in all the necessary products
+        Inputs:
+            area        polygon with the search area
+            time        time interval (init_time,final_time)
+            num         number of granules to process (if 0: all the granules)
+        Outputs: 
+            granules    a dictionary with the metadata of all the products
+
+        Developed in Python 2.7.15 :: Anaconda 4.5.10, on MACINTOSH. 
+        Angel Farguell (angel.farguell@gmail.com), 2018-09-17
+    """
     granules=Dict({});
     #MOD14: MODIS Terra fire data
     granules.MOD14=search_api("MOD14",area,time,num,"Terra")
@@ -76,7 +101,17 @@ def get_meta(area,time,num=0):
     #granules.VNP14hi=search("VNP14IMGTDL_NRT",area,time,num)
     return granules
 
-def agrupate(path,reg):
+def group_files(path,reg):
+    """ group_files: 
+        Inputs:
+            path
+            reg
+        Outputs: 
+            files
+
+        Developed in Python 2.7.15 :: Anaconda 4.5.10, on MACINTOSH. 
+        Angel Farguell (angel.farguell@gmail.com), 2018-09-17
+    """
     files=[[k] for k in glob.glob(path+'/'+reg+'03*')]
     filesf=glob.glob(path+'/'+reg+'14*')
     if len(filesf)>0:
@@ -92,59 +127,138 @@ def agrupate(path,reg):
                             files[k].append(f) 
     return files
 
-def agrupate_all(path):
+# Function to collect all the agrupations from all the different products
+# Inputs:
+#       path
+# Outputs:
+#       files
+def group_all(path):
+    """ group_all: Combine all the geolocation files (03) and fire files (14) in a path
+        Inputs:
+            path
+            reg
+        Outputs: 
+            files
+
+        Developed in Python 2.7.15 :: Anaconda 4.5.10, on MACINTOSH. 
+        Angel Farguell (angel.farguell@gmail.com), 2018-09-17
+    """
     # MOD files
-    modf=agrupate(path,'MOD')
+    modf=group_files(path,'MOD')
     # MYD files
-    mydf=agrupate(path,'MYD')
+    mydf=group_files(path,'MYD')
     # VIIRS files
-    vif=agrupate(path,'VNP')
+    vif=group_files(path,'VNP')
     files=[modf,mydf,vif]
     return files
 
-def read_modis_files(files,field,key,data):
+# Function to read the agrupated 03 and 14 MODIS (MOD and MYD) satellite data
+# Inputs:
+#       files
+# Outputs:
+#       ret
+def read_modis_files(files):
     hdfg=SD(files[0],SDC.READ)
     hdff=SD(files[1],SDC.READ)
     lat_obj=hdfg.select('Latitude')
     lon_obj=hdfg.select('Longitude')    
     fire_mask_obj=hdff.select('fire mask')
-    data[field][key].lat=np.array(lat_obj.get())
-    data[field][key].lon=np.array(lon_obj.get())
-    data[field][key].fire=np.array(fire_mask_obj.get())
+    ret=Dict([])
+    ret.lat=np.array(lat_obj.get())
+    ret.lon=np.array(lon_obj.get())
+    ret.fire=np.array(fire_mask_obj.get())
+    return ret
 
-def read_viirs_files(files,field,key,data):
+# Function to read the agrupated 03 and 14 VIIRS satellite data
+# Inputs:
+#       files
+# Outputs:
+#       ret
+def read_viirs_files(files):
     h5g=h5py.File(files[0],'r')
-    data[field][key].lat=np.array(h5g['HDFEOS']['SWATHS']['VNP_750M_GEOLOCATION']['Geolocation Fields']['Latitude'])
-    data[field][key].lon=np.array(h5g['HDFEOS']['SWATHS']['VNP_750M_GEOLOCATION']['Geolocation Fields']['Longitude'])
+    ret=Dict([])
+    ret.lat=np.array(h5g['HDFEOS']['SWATHS']['VNP_750M_GEOLOCATION']['Geolocation Fields']['Latitude'])
+    ret.lon=np.array(h5g['HDFEOS']['SWATHS']['VNP_750M_GEOLOCATION']['Geolocation Fields']['Longitude'])
     ncf=Dataset(files[1],'r')
-    data[field][key].fire=np.array(ncf.variables['fire mask'][:])
+    ret.fire=np.array(ncf.variables['fire mask'][:])
+    return ret
 
-def read_data(files,field,data):
-    data[field]=Dict([])
+# Funtion to read the agrupated 03 and 14 VIIRS satellite data
+# Inputs:
+#       files
+#       file_metadata
+# Outputs:
+#       data
+def read_data(files,file_metadata):
+    print "read_data files=%s" %  files
+    data=Dict([])
     for f in files:
+        print "read_data f=%s" % f
+        if len(f) != 2:
+            print 'ERROR: need 2 files, have %s' % len(f)
+            continue 
+        f0=os.path.basename(f[0])
+        f1=os.path.basename(f[1])
+        prefix = f0[:3] 
+        print 'prefix %s' % prefix
+        if prefix != f1[:3]:
+            print 'ERROR: the prefix of both files must coincide'
+            continue 
         m=f[0].split('/')
         mm=m[-1].split('.')
         key=mm[1]+'_'+mm[2]
-        data[field][key]=Dict([])
-        if field=="MOD" or field=="MYD":
-            read_modis_files(f,field,key,data)
-        elif field=="VNP":
-            read_viirs_files(f,field,key,data)
+        id = prefix + '_' + key
+        print "id"
+        print id 
+        if prefix=="MOD" or prefix=="MYD":
+            item=read_modis_files(f)
+        elif prefix=="VNP":
+            item=read_viirs_files(f)
+        else:
+            print 'ERROR: the prefix must be MOD, MYD, or VNP'
+            continue 
+        # connect the file back to metadata
+        item.time_start_geo=file_metadata[f0]["time_start"]
+        item.time_start_fire=file_metadata[f1]["time_start"]
+        item.time_end_geo=file_metadata[f0]["time_end"]
+        item.time_end_fire=file_metadata[f1]["time_end"]
+        item.file_geo=f0
+        item.file_fire=f1
+        item.prefix = prefix
+        data.update({id:item})
+    return data
 
-#data = []
+# Function to download the granules specified
+# Inputs:
+#       granules
+# Outputs:
+#       file_metada
 def download(granules):
+    """
+    Download files as listed in the granules metadata
+    :param: granules 
+    "returns: dictionary with file names as key and granules metadata as values
+    """
+    file_metadata = {} 
     for granule in granules:
+        print json.dumps(granule,indent=4, separators=(',', ': ')) 
         url = granule['links'][0]['href']
         filename=os.path.basename(urlparse.urlsplit(url).path)
+        file_metadata[filename]=granule
+
         # to store as object in memory (maybe not completely downloaded until accessed?)
         # with requests.Session() as s:
         #    data.append(s.get(url))
 
         # download -  a minimal code without various error checking and corrective actions
         # see wrfxpy/src/ingest/downloader.py
+        if os.path.isfile(filename):
+            print 'file %s already downloaded' % filename
+            continue
         try:
             chunk_size = 1024*1024
             s = 0
+            print 'downloading %s as %s' % (url,filename)
             r = requests.get(url, stream=True)
             if r.status_code == 200:
                 content_size = int(r.headers['Content-Length'])
@@ -162,31 +276,57 @@ def download(granules):
                 sys.exit(1)
         except Exception as e:
             print 'download failed with error %s' % e 
+    return file_metadata
 
-
-def main():
+# Function to retrieve the data in a bounding box coordinates and time interval
+# Inputs:
+#       bbox
+#       time
+# Outputs:
+#       
+def retrieve_af_data(bbox,time):
     # Define settings
-    area = [(-132.86966,66.281204),(-132.86966,44.002495),(-102.0868788,44.002495),(-102.0560592,66.281204),(-132.86966,66.281204)]
-    time = ("2012-09-11T00:00:00Z", "2012-09-12T00:00:00Z")
-    ngranules = 2
+    lonmin,lonmax,latmin,latmax = bbox
+    area = [(lonmin,latmax),(lonmin,latmin),(lonmax,latmin),(lonmax,latmax),(lonmin,latmax)]
+    ngranules = 0
+
+    print "area"
+    print area
+    print "time:"
+    print time
+    print "ngranules:"
+    print ngranules
 
     # Get data
     granules=get_meta(area,time,ngranules)
+    print 'medatada found:\n' + json.dumps(granules,indent=4, separators=(',', ': ')) 
+
+    file_metadata = {}
     for k,g in granules.items():
         print 'Downloading %s files' % k
-        download(g)
+        file_metadata.update(download(g))
+        #print "download g:"
+        #print g
 
-    # Agrupate files
-    files=agrupate_all(".")
+    print "download complete"
+
+    # group all files downloaded
+    files=group_all(".")
+    print "group all files:"
+    print files
 
     # Generate data dictionary
     data=Dict([])
-    read_data(files[0],"MOD",data)
-    read_data(files[1],"MYD",data)
-    read_data(files[2],"VNP",data)
+    data.update(read_data(files[0],file_metadata))
+    data.update(read_data(files[1],file_metadata))
+    data.update(read_data(files[2],file_metadata))
+
+    print data
 
     # Save the data dictionary into a matlab structure file out.mat
     sio.savemat('out.mat', mdict=data)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    bbox=[-132.86966,-102.0868788,44.002495,66.281204]
+    time = ("2012-09-11T00:00:00Z", "2012-09-12T00:00:00Z")
+    retrieve_af_data(bbox,time)
